@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import numpy as np
-from scipy.optimize import linprog
+from scipy.optimize import milp, LinearConstraint, Bounds
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -36,7 +36,7 @@ class Protein:
 class ResultsWindow(tk.Toplevel):
     def __init__(self, parent, foods, x_opt, target_prot, budget):
         super().__init__(parent)
-        self.title("Resultado da Otimização")
+        self.title("Resultado da Otimização (ILP - Programação Inteira)")
         self.geometry("900x800")
         
         self.foods = foods
@@ -80,18 +80,17 @@ class ResultsWindow(tk.Toplevel):
             f"RESTRIÇÕES:\n"
             f"1. Proteína Mínima: {constr_prot} ≥ {self.target_prot}\n"
             f"2. Orçamento Máximo: {constr_budget} ≤ {self.budget}\n"
-            f"3. Não-negatividade: x_i ≥ 0, ∀i\n\n"
-            f"🔄 FORMA PADRÃO (Solver):\n"
-            f"min cᵀx  sujeito a  A_ub·x ≤ b_ub,  x ≥ 0\n"
-            f"• c = {c}\n"
-            f"• A_ub[0] = {[-f.protein_grams for f in self.foods]}  (proteína * -1)\n"
-            f"• A_ub[1] = {[f.price for f in self.foods]}\n"
-            f"• b_ub = [{-self.target_prot}, {self.budget}]\n\n"
+            f"3. Integralidade: x_i ∈ ℤ⁺, ∀i\n\n"
+            f"🔄 FORMA PADRÃO (Solver MILP - HiGHS):\n"
+            f"min cᵀx  sujeito a  lb ≤ A·x ≤ ub,  x ∈ ℤ⁺\n"
+            f"• c = {list(c)}\n"
+            f"• A[0] (proteína) = {[f.protein_grams for f in self.foods]}  lb={self.target_prot}, ub=∞\n"
+            f"• A[1] (orçamento) = {[f.price for f in self.foods]}  lb=-∞, ub={self.budget}\n\n"
             f"✅ RESULTADO ÓTIMO:\n"
         )
         
         for f, val in zip(self.foods, self.x_opt):
-            math_text += f"  • {f.name}: {val:.2f} un. | Custo: R${val*f.price:.2f} | Prot: {val*f.protein_grams:.1f}g\n"
+            math_text += f"  • {f.name}: {int(val)} un. | Custo: R${val*f.price:.2f} | Prot: {val*f.protein_grams:.1f}g\n"
         
         total_cost = sum(f.price * val for f, val in zip(self.foods, self.x_opt))
         total_prot = sum(f.protein_grams * val for f, val in zip(self.foods, self.x_opt))
@@ -240,24 +239,26 @@ class OptimizationApp:
             messagebox.showerror("Erro", "Meta de proteína e orçamento devem ser números.")
             return
 
-        # Preparar vetores
-        c = [f.price for f in self.foods]
-        
-        A_ub = [
-            [-f.protein_grams for f in self.foods],
-            [f.price for f in self.foods]
-        ]
-        b_ub = [-target_prot, budget]
-        bounds = [(0, None) for _ in self.foods]
+        # Preparar vetores para ILP (Programação Linear Inteira)
+        c = np.array([f.price for f in self.foods])
 
-        res = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method='highs')
+        A = np.array([
+            [f.protein_grams for f in self.foods],  # restrição de proteína
+            [f.price for f in self.foods]            # restrição de orçamento
+        ], dtype=float)
+
+        constraints = LinearConstraint(A, lb=[target_prot, -np.inf], ub=[np.inf, budget])
+        integrality = np.ones(len(self.foods))  # todas as variáveis são inteiras
+        bounds = Bounds(lb=0)                   # x_i >= 0
+
+        res = milp(c, constraints=constraints, integrality=integrality, bounds=bounds)
 
         if not res.success:
-            messagebox.showerror("Inviável", "Não existe solução que atenda às restrições (proteína muito alta ou orçamento muito baixo).")
+            messagebox.showerror("Inviável", "Não existe solução inteira que atenda às restrições (proteína muito alta ou orçamento muito baixo).")
             return
 
-        # Abrir nova janela de resultados
-        ResultsWindow(self.root, self.foods, res.x, target_prot, budget)
+        # Abrir nova janela de resultados (round + clip para garantir inteiros não-negativos)
+        ResultsWindow(self.root, self.foods, np.maximum(np.round(res.x), 0), target_prot, budget)
 
 if __name__ == "__main__":
     root = tk.Tk()
