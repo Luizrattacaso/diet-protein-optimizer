@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import numpy as np
-from scipy.optimize import milp, LinearConstraint, Bounds
+from scipy.optimize import milp, LinearConstraint, Bounds, linprog
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -37,7 +37,7 @@ class ResultsWindow(tk.Toplevel):
     def __init__(self, parent, foods, x_opt, target_prot, budget):
         super().__init__(parent)
         self.title("Resultado da Otimização (ILP - Programação Inteira)")
-        self.geometry("900x800")
+        self.geometry("900x1050")
         
         self.foods = foods
         self.x_opt = x_opt
@@ -47,6 +47,8 @@ class ResultsWindow(tk.Toplevel):
         self._setup_ui()
         self._display_math()
         self._plot_graph()
+        self._compute_sensitivity()
+        self._display_sensitivity()
 
     def _setup_ui(self):
         # Seção 3: Matemática
@@ -63,6 +65,18 @@ class ResultsWindow(tk.Toplevel):
         self.fig, self.ax = plt.subplots(figsize=(8, 5))
         self.canvas = FigureCanvasTkAgg(self.fig, master=graph_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # Seção 5: Análise de Sensibilidade
+        sens_frame = ttk.LabelFrame(self, text="5. Análise de Sensibilidade (Relaxação LP)", padding=15)
+        sens_frame.pack(fill="x", padx=20, pady=10)
+
+        sens_inner = tk.Frame(sens_frame)
+        sens_inner.pack(fill="both", expand=True)
+        self.txt_sens = tk.Text(sens_inner, height=12, wrap=tk.WORD, font=("Consolas", 10))
+        scrollbar_sens = ttk.Scrollbar(sens_inner, orient="vertical", command=self.txt_sens.yview)
+        self.txt_sens.configure(yscrollcommand=scrollbar_sens.set)
+        self.txt_sens.pack(side="left", fill="both", expand=True)
+        scrollbar_sens.pack(side="right", fill="y")
 
     def _display_math(self):
         c = [f.price for f in self.foods]
@@ -139,6 +153,92 @@ class ResultsWindow(tk.Toplevel):
         self.ax.legend(loc='upper right')
         self.fig.tight_layout()
         self.canvas.draw()
+
+    def _compute_sensitivity(self):
+        c_lp = [f.price for f in self.foods]
+        A_ub = [
+            [-f.protein_grams for f in self.foods],
+            [f.price for f in self.foods]
+        ]
+        b_ub = [-self.target_prot, self.budget]
+        bounds_lp = [(0, None) for _ in self.foods]
+
+        res_lp = linprog(c_lp, A_ub=A_ub, b_ub=b_ub, bounds=bounds_lp, method='highs')
+
+        if res_lp.success and hasattr(res_lp, 'ineqlin'):
+            # Constraint 0: -protein @ x <= -target_prot → marginal negada para interpretação direta
+            self.shadow_protein = -res_lp.ineqlin.marginals[0]
+            self.shadow_budget  =  res_lp.ineqlin.marginals[1]
+            self.reduced_costs  = list(res_lp.lower.marginals)
+            self.lp_cost        = res_lp.fun
+            self.lp_x           = list(res_lp.x)
+            self.sens_available = True
+        else:
+            self.sens_available = False
+
+    def _display_sensitivity(self):
+        if not self.sens_available:
+            self.txt_sens.insert(tk.END, "Análise de sensibilidade indisponível.")
+            return
+
+        ilp_cost   = sum(f.price * v for f, v in zip(self.foods, self.x_opt))
+        ilp_prot   = sum(f.protein_grams * v for f, v in zip(self.foods, self.x_opt))
+        gap_abs    = ilp_cost - self.lp_cost
+        gap_pct    = (gap_abs / self.lp_cost * 100) if self.lp_cost > 1e-9 else 0.0
+        slack_prot = ilp_prot - self.target_prot
+        slack_bdg  = self.budget - ilp_cost
+
+        budget_ativo = abs(self.shadow_budget) > 1e-6
+
+        text = (
+            f" ANÁLISE DE SENSIBILIDADE (Relaxação LP)\n"
+            f"{'='*52}\n\n"
+            f"GAP DE INTEGRALIDADE (LP vs ILP):\n"
+            f"  Custo ótimo LP  (contínuo) : R${self.lp_cost:.4f}\n"
+            f"  Custo ótimo ILP (inteiro)  : R${ilp_cost:.2f}\n"
+            f"  Gap absoluto               : R${gap_abs:.4f}\n"
+            f"  Gap relativo               : {gap_pct:.2f}% acima do ótimo contínuo\n\n"
+            f"PREÇOS SOMBRA (Shadow Prices / Variáveis Duais):\n"
+            f"  Restrição Proteína (>= {self.target_prot}g):\n"
+            f"    Preço sombra : R${self.shadow_protein:.4f} por grama\n"
+            f"    Cada 1g adicional na meta de proteína aumenta\n"
+            f"    o custo mínimo em R${self.shadow_protein:.4f}\n\n"
+            f"  Restrição Orçamento (<= R${self.budget}):\n"
+            f"    Preço sombra : R${self.shadow_budget:.4f} por real\n"
+        )
+
+        if budget_ativo:
+            text += (
+                f"    Restrição ATIVA — cada R$1 a mais no orçamento\n"
+                f"    reduziria o custo em R${abs(self.shadow_budget):.4f}\n\n"
+            )
+        else:
+            text += (
+                f"    Restrição NÃO ATIVA — custo ótimo (R${ilp_cost:.2f})\n"
+                f"    está abaixo do orçamento. Ampliar o orçamento\n"
+                f"    não reduz o custo mínimo neste cenário.\n\n"
+            )
+
+        text += "CUSTOS REDUZIDOS (Reduced Costs):\n"
+        for f, rc, lp_val in zip(self.foods, self.reduced_costs, self.lp_x):
+            in_sol = lp_val > 1e-6
+            if in_sol:
+                text += f"  {f.name}: {rc:.4f}  → está na solução LP (custo reduzido ≈ 0)\n"
+            else:
+                text += (
+                    f"  {f.name}: {rc:.4f}  → preço precisaria cair "
+                    f"R${rc:.4f}/un para entrar na solução\n"
+                )
+
+        text += (
+            f"\nFOLGAS DAS RESTRIÇÕES (Solução ILP):\n"
+            f"  Proteína : obtida {ilp_prot:.1f}g, meta {self.target_prot}g "
+            f"→ folga = +{slack_prot:.1f}g\n"
+            f"  Orçamento: gasto R${ilp_cost:.2f}, limite R${self.budget:.2f} "
+            f"→ folga = R${slack_bdg:.2f}\n"
+        )
+
+        self.txt_sens.insert(tk.END, text)
 
 # ==========================================
 # 2. JANELA PRINCIPAL (Inputs)
