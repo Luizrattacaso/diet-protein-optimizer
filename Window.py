@@ -9,8 +9,9 @@ from scipy.optimize import linprog
 class ResultsWindow(tk.Toplevel):
     def __init__(self, parent, foods, x_opt, target_prot, budget):
         super().__init__(parent)
-        self.title("Resultado da Otimização - Resolução Gráfica")
-        self.geometry("1100x900")
+        self.title("Resultado da Otimização — ILP")
+        self.geometry("1100x950")
+        self.configure(bg="#F0F4F8")
         
         self.foods = foods
         self.x_opt = x_opt
@@ -28,14 +29,16 @@ class ResultsWindow(tk.Toplevel):
         res_frame = ttk.LabelFrame(self, text="3. Formulação Matemática e Resultados", padding=15)
         res_frame.pack(fill="x", padx=20, pady=10)
 
-        self.txt_math = tk.Text(res_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_math = tk.Text(res_frame, height=8, wrap=tk.WORD, font=("Consolas", 10),
+            bg="#F8FAFC", fg="#1A237E", selectbackground="#1565C0",
+            selectforeground="white", relief="flat", bd=0, padx=8, pady=6)
         self.txt_math.pack(fill="both", expand=True)
 
         # Seção 4: Gráfico de Resolução Gráfica
         graph_frame = ttk.LabelFrame(self, text="4. Resolução Gráfica - Região Viável e Ponto Ótimo", padding=15)
         graph_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-        self.fig, self.ax = plt.subplots(figsize=(10, 6))
+        self.fig, self.ax = plt.subplots(figsize=(10, 6), facecolor="#F8FAFC")
         self.canvas = FigureCanvasTkAgg(self.fig, master=graph_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
@@ -45,7 +48,9 @@ class ResultsWindow(tk.Toplevel):
 
         sens_inner = tk.Frame(sens_frame)
         sens_inner.pack(fill="both", expand=True)
-        self.txt_sens = tk.Text(sens_inner, height=8, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_sens = tk.Text(sens_inner, height=8, wrap=tk.WORD, font=("Consolas", 10),
+            bg="#F8FAFC", fg="#1A237E", selectbackground="#1565C0",
+            selectforeground="white", relief="flat", bd=0, padx=8, pady=6)
         scrollbar_sens = ttk.Scrollbar(sens_inner, orient="vertical", command=self.txt_sens.yview)
         self.txt_sens.configure(yscrollcommand=scrollbar_sens.set)
         self.txt_sens.pack(side="left", fill="both", expand=True)
@@ -87,7 +92,8 @@ class ResultsWindow(tk.Toplevel):
 
     def _plot_graph(self):
         self.ax.clear()
-        
+        self.ax.set_facecolor("#FFFFFF")
+
         if len(self.foods) == 2:
             self._plot_2d_graph()
         else:
@@ -117,8 +123,10 @@ class ResultsWindow(tk.Toplevel):
         else:
             x2_budget = np.zeros_like(x1)
         
-        self.ax.plot(x1, x2_prot, 'r-', linewidth=2, label=f'Restrição 1: Proteína ≥ {self.target_prot}g')
-        self.ax.plot(x1, x2_budget, 'b-', linewidth=2, label=f'Restrição 2: Orçamento ≤ R${self.budget}')
+        self.ax.plot(x1, x2_prot,   color="#E53935", linewidth=2.5,
+                     label=f'Restrição 1: Proteína ≥ {self.target_prot}g')
+        self.ax.plot(x1, x2_budget, color="#1565C0", linewidth=2.5,
+                     label=f'Restrição 2: Orçamento ≤ R${self.budget}')
         
         self.ax.axhline(y=0, color='k', linewidth=1)
         self.ax.axvline(x=0, color='k', linewidth=1)
@@ -128,28 +136,31 @@ class ResultsWindow(tk.Toplevel):
         
         if len(vertices) > 2:
             # Preencher região viável
-            feasible_region = Polygon(vertices, alpha=0.3, color='yellow', label='Região Viável')
+            feasible_region = Polygon(vertices, alpha=0.22, color='#43A047', label='Região Viável')
             self.ax.add_patch(feasible_region)
-            
-            # Destacar vértices
+
             vertices_array = np.array(vertices)
-            self.ax.plot(vertices_array[:, 0], vertices_array[:, 1], 'ko', markersize=6)
+            self.ax.plot(vertices_array[:, 0], vertices_array[:, 1],
+                         'o', color="#37474F", markersize=7)
         
         # Plotar ponto ótimo
         opt_x1, opt_x2 = self.x_opt[0], self.x_opt[1]
-        self.ax.plot(opt_x1, opt_x2, 'r*', markersize=15, markeredgewidth=2, label=f'Ponto Ótimo\n({opt_x1:.0f}, {opt_x2:.0f})')
+        self.ax.plot(opt_x1, opt_x2, '*', color="#FF6F00", markersize=20,
+                     markeredgecolor="#212121", markeredgewidth=1.2,
+                     label=f'Ponto Ótimo  ({opt_x1:.0f}, {opt_x2:.0f})')
 
         Z_opt = f1.price * opt_x1 + f2.price * opt_x2
         if f2.price != 0:
             x2_obj = (Z_opt - f1.price * x1) / f2.price
-            self.ax.plot(x1, x2_obj, 'g--', linewidth=1.5, alpha=0.7, label=f'Função Objetivo\n(Z = R${Z_opt:.2f})')
+            self.ax.plot(x1, x2_obj, '--', color="#7B1FA2", linewidth=2, alpha=0.8,
+                         label=f'Função Objetivo  (Z = R${Z_opt:.2f})')
         
         # Configurações do gráfico
         self.ax.set_xlabel(f'Quantidade de {f1.name} (x₁)', fontsize=12)
         self.ax.set_ylabel(f'Quantidade de {f2.name} (x₂)', fontsize=12)
         self.ax.set_title('RESOLUÇÃO GRÁFICA - Programação Linear Inteira', fontsize=14, fontweight='bold', pad=20)
         self.ax.legend(loc='upper right', fontsize=10)
-        self.ax.grid(True, alpha=0.3, linestyle='--')
+        self.ax.grid(True, alpha=0.4, linestyle='--', color='#B0BEC5')
         self.ax.set_xlim(0, max_x1)
         self.ax.set_ylim(0, max_x2)
         
@@ -222,7 +233,7 @@ class ResultsWindow(tk.Toplevel):
         self.ax.set_ylabel('Valor', fontsize=12)
         self.ax.set_title('Distribuição da Solução Ótima', fontsize=14, fontweight='bold')
         self.ax.legend()
-        self.ax.grid(True, alpha=0.3, axis='y')
+        self.ax.grid(True, alpha=0.4, axis='y', linestyle='--', color='#B0BEC5')
         
         total_cost = sum(costs)
         total_prot = sum(proteins)
