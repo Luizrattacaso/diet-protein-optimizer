@@ -5,7 +5,7 @@ import matplotlib
 matplotlib.use("TkAgg")
 from scipy.optimize import milp, LinearConstraint, Bounds, linprog
 from Protein import Protein
-from Window import ResultsWindow
+from Window import ResultsWindow, SensitivityWindow
 from dataset_loader import DatasetDialog, search_foods
 
 
@@ -73,6 +73,8 @@ class OptimizationApp:
 
         ttk.Button(param_frame, text="🚀 Rodar Otimização", command=self._run_optimization,
                    style="Accent.TButton").grid(row=0, column=4, padx=10, sticky="ew")
+        ttk.Button(param_frame, text="📊 Sensibilidade", command=self._run_sensitivity).grid(
+            row=0, column=5, padx=(0, 10), sticky="ew")
 
         input_frame.grid_columnconfigure(1, weight=1)
 
@@ -219,15 +221,29 @@ class OptimizationApp:
         ], dtype=float)
 
         constraints = LinearConstraint(A, lb=[target_prot, -np.inf], ub=[np.inf, budget])
-        integrality = np.ones(len(self.foods))
         bounds = Bounds(lb=0)
-        res = milp(c, constraints=constraints, integrality=integrality, bounds=bounds)
+        res = milp(c, constraints=constraints, integrality=np.ones(len(self.foods)), bounds=bounds)
 
         if not res.success:
             messagebox.showerror("Inviável", "Não existe solução que atenda às restrições.")
             return
 
-        ResultsWindow(self.root, self.foods, np.maximum(np.round(res.x), 0), target_prot, budget)
+        res_lp = milp(c, constraints=constraints, integrality=np.zeros(len(self.foods)), bounds=bounds)
+        x_lp = np.maximum(res_lp.x, 0) if res_lp.success else None
+
+        ResultsWindow(self.root, self.foods, np.maximum(np.round(res.x), 0), target_prot, budget, x_lp=x_lp)
+
+    def _run_sensitivity(self):
+        if len(self.foods) < 1:
+            messagebox.showwarning("Atenção", "Adicione pelo menos 1 alimento.")
+            return
+        try:
+            target_prot = float(self.ent_target_prot.get())
+            budget = float(self.ent_budget.get())
+        except ValueError:
+            messagebox.showerror("Erro", "Meta de proteína e orçamento devem ser números.")
+            return
+        SensitivityWindow(self.root, self.foods, target_prot, budget)
 
     def _open_dataset(self):
         DatasetDialog(self.root, self._add_from_dataset)
