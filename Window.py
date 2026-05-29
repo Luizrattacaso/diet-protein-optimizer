@@ -6,7 +6,7 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Polygon
-from scipy.optimize import milp, LinearConstraint, Bounds
+from scipy.optimize import milp, LinearConstraint, Bounds, linprog
 
 class ResultsWindow(tk.Toplevel):
     def __init__(self, parent, foods, x_opt, target_prot, budget, x_lp=None):
@@ -86,7 +86,49 @@ class ResultsWindow(tk.Toplevel):
             math_text += f"\nCusto LP: R${total_cost_lp:.2f} | Proteína LP: {total_prot_lp:.1f}g"
             math_text += f"\nGap de Integralidade: {gap:.2f}%  [ (Z_ILP - Z_LP) / Z_LP ]"
 
+        sp_prot, sp_prot_per_real = self._compute_shadow_prices()
+        if sp_prot is not None:
+            math_text += f"\n\nPREÇOS-SOMBRA (Dualidade LP):\n{'─'*44}\n"
+            math_text += f"Custo marginal da proteína:      R${sp_prot:.4f}/g\n"
+            math_text += f"→ Cada +1g na meta eleva o custo mínimo em R${sp_prot:.4f}\n"
+            if sp_prot_per_real is not None:
+                math_text += f"\nProteína marginal do orçamento:  {sp_prot_per_real:.3f}g/R$\n"
+                math_text += f"→ Cada +R$1 no orçamento libera até {sp_prot_per_real:.3f}g a mais de proteína"
+
         self.txt_math.insert(tk.END, math_text)
+
+    def _compute_shadow_prices(self):
+        """Resolve dois LPs contínuos e retorna preços-sombra via variáveis duais."""
+        n = len(self.foods)
+        bounds = [(0, None)] * n
+
+        # LP 1: minimizar custo s.t. proteína >= meta, custo <= orçamento
+        # Convertido para forma padrão A_ub x <= b_ub:
+        #   -proteína <= -meta   e   custo <= orçamento
+        A1 = [[-f.protein_grams for f in self.foods],
+              [f.price           for f in self.foods]]
+        b1 = [-self.target_prot, self.budget]
+        c1 = [f.price for f in self.foods]
+        res1 = linprog(c1, A_ub=A1, b_ub=b1, bounds=bounds, method='highs')
+
+        sp_prot = None
+        if res1.success and hasattr(res1, 'ineqlin'):
+            # marginals[0] = ∂Z*/∂(-meta)  →  ∂Z*/∂meta = -marginals[0]
+            sp_prot = float(-res1.ineqlin.marginals[0])
+
+        # LP 2: maximizar proteína s.t. custo <= orçamento
+        # Equivale a minimizar -proteína s.t. custo <= orçamento
+        A2 = [[f.price for f in self.foods]]
+        b2 = [self.budget]
+        c2 = [-f.protein_grams for f in self.foods]
+        res2 = linprog(c2, A_ub=A2, b_ub=b2, bounds=bounds, method='highs')
+
+        sp_prot_per_real = None
+        if res2.success and hasattr(res2, 'ineqlin'):
+            # ∂(max_prot)/∂orçamento = -marginals[0]  (sinal invertido pela negação)
+            sp_prot_per_real = float(-res2.ineqlin.marginals[0])
+
+        return sp_prot, sp_prot_per_real
 
     def _plot_graph(self):
         self.ax.clear()
