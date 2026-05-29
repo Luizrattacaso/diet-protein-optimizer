@@ -76,6 +76,14 @@ class OptimizationApp:
         ttk.Button(param_frame, text="📊 Sensibilidade", command=self._run_sensitivity).grid(
             row=0, column=5, padx=(0, 10), sticky="ew")
 
+        ttk.Label(param_frame, text="Diversidade mín. (categorias):").grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
+        self.spn_min_cats = ttk.Spinbox(param_frame, from_=0, to=12, width=5)
+        self.spn_min_cats.set(0)
+        self.spn_min_cats.grid(row=1, column=2, sticky="w", pady=(6, 0))
+        ttk.Label(param_frame, text="(0 = sem restrição)", foreground="gray").grid(
+            row=1, column=3, columnspan=3, sticky="w", padx=5, pady=(6, 0))
+
         input_frame.grid_columnconfigure(1, weight=1)
 
     # ── Autocomplete ──────────────────────────────────────────────────────────
@@ -182,6 +190,9 @@ class OptimizationApp:
 
     # ── Food management ───────────────────────────────────────────────────────
 
+    def _food_exists(self, name: str) -> bool:
+        return any(f.name.lower() == name.lower() for f in self.foods)
+
     def _add_food(self):
         try:
             name = self.ent_name.get().strip() or f"Alimento {self.food_counter}"
@@ -190,13 +201,17 @@ class OptimizationApp:
             prot = float(self.ent_prot.get())
             if price <= 0 or grams <= 0 or prot < 0:
                 raise ValueError
-            food = Protein(name, price, grams, prot)
-            self.foods.append(food)
-            self.lb_foods.insert(tk.END, repr(food))
-            self.food_counter += 1
-            self._clear_inputs()
         except ValueError:
             messagebox.showerror("Erro", "Preencha todos os campos com valores válidos (>0).")
+            return
+        if self._food_exists(name):
+            messagebox.showwarning("Duplicado", f'"{name}" já está na lista.\nAltere a quantidade diretamente no campo acima.')
+            return
+        food = Protein(name, price, grams, prot)
+        self.foods.append(food)
+        self.lb_foods.insert(tk.END, repr(food))
+        self.food_counter += 1
+        self._clear_inputs()
 
     def _clear_inputs(self):
         for ent in [self.ent_name, self.ent_price, self.ent_grams, self.ent_prot]:
@@ -210,28 +225,93 @@ class OptimizationApp:
         try:
             target_prot = float(self.ent_target_prot.get())
             budget = float(self.ent_budget.get())
+            min_cats = int(self.spn_min_cats.get())
         except ValueError:
-            messagebox.showerror("Erro", "Meta de proteína e orçamento devem ser números.")
+            messagebox.showerror("Erro", "Preencha os campos com valores válidos.")
             return
 
-        c = np.array([f.price for f in self.foods])
-        A = np.array([
-            [f.protein_grams for f in self.foods],
-            [f.price for f in self.foods]
-        ], dtype=float)
+        n = len(self.foods)
+        c_foods = np.array([f.price for f in self.foods])
 
-        constraints = LinearConstraint(A, lb=[target_prot, -np.inf], ub=[np.inf, budget])
-        bounds = Bounds(lb=0)
-        res = milp(c, constraints=constraints, integrality=np.ones(len(self.foods)), bounds=bounds)
+        if min_cats <= 0:
+            # ── Formulação original (sem restrição de diversidade) ──────────
+            A = np.array([[f.protein_grams for f in self.foods],
+                          [f.price for f in self.foods]], dtype=float)
+            constraints = LinearConstraint(A, lb=[target_prot, -np.inf], ub=[np.inf, budget])
+            bounds = Bounds(lb=0)
 
-        if not res.success:
-            messagebox.showerror("Inviável", "Não existe solução que atenda às restrições.")
-            return
+            res = milp(c_foods, constraints=constraints,
+                       integrality=np.ones(n), bounds=bounds)
+            if not res.success:
+                messagebox.showerror("Inviável", "Não existe solução que atenda às restrições.")
+                return
 
-        res_lp = milp(c, constraints=constraints, integrality=np.zeros(len(self.foods)), bounds=bounds)
-        x_lp = np.maximum(res_lp.x, 0) if res_lp.success else None
+            x_opt = np.maximum(np.round(res.x), 0)
+            res_lp = milp(c_foods, constraints=constraints,
+                          integrality=np.zeros(n), bounds=bounds)
+            x_lp = np.maximum(res_lp.x, 0) if res_lp.success else None
 
-        ResultsWindow(self.root, self.foods, np.maximum(np.round(res.x), 0), target_prot, budget, x_lp=x_lp)
+        else:
+            # ── Formulação com diversidade de categorias ─────────────────────
+            # Variáveis: [x_0..x_{n-1}, y_0..y_{K-1}]
+            # y_k ∈ {0,1}: indica se pelo menos 1 alimento da categoria k é usado
+            # Restrição: x_i <= M * y_{k(i)}  →  sem y_k, x_i forçado a 0
+            cats = list(dict.fromkeys(f.category for f in self.foods))
+            K = len(cats)
+            cat_map = {cat: k for k, cat in enumerate(cats)}
+            D = min(min_cats, K)
+
+            min_price = min((f.price for f in self.foods if f.price > 0), default=1.0)
+            M = int(budget / min_price) + 2
+
+            c = np.concatenate([c_foods, np.zeros(K)])
+            rows, lbs, ubs = [], [], []
+
+            rows.append(np.concatenate([[f.protein_grams for f in self.foods], np.zeros(K)]))
+            lbs.append(target_prot); ubs.append(np.inf)
+
+            rows.append(np.concatenate([c_foods, np.zeros(K)]))
+            lbs.append(-np.inf); ubs.append(budget)
+
+            for i, food in enumerate(self.foods):
+                row = np.zeros(n + K)
+                row[i] = 1
+                row[n + cat_map[food.category]] = -M
+                rows.append(row); lbs.append(-np.inf); ubs.append(0)
+
+            # Restrição reversa: sum(x_i for i in cat k) >= y_k
+            # Garante que y_k=1 só é válido se ao menos 1 alimento da categoria k foi comprado
+            for k in range(K):
+                row = np.zeros(n + K)
+                for i, food in enumerate(self.foods):
+                    if cat_map[food.category] == k:
+                        row[i] = 1
+                row[n + k] = -1
+                rows.append(row); lbs.append(0); ubs.append(np.inf)
+
+            rows.append(np.concatenate([np.zeros(n), np.ones(K)]))
+            lbs.append(D); ubs.append(np.inf)
+
+            constraints = LinearConstraint(np.array(rows), lb=lbs, ub=ubs)
+            bounds = Bounds(
+                lb=np.zeros(n + K),
+                ub=np.concatenate([np.full(n, np.inf), np.ones(K)])
+            )
+
+            res = milp(c, constraints=constraints, integrality=np.ones(n + K), bounds=bounds)
+            if not res.success:
+                messagebox.showerror(
+                    "Inviável",
+                    f"Sem solução com {D} categorias diferentes.\n"
+                    "Reduza a diversidade mínima ou adicione mais alimentos de categorias distintas.")
+                return
+
+            x_opt = np.maximum(np.round(res.x[:n]), 0)
+            res_lp = milp(c, constraints=constraints,
+                          integrality=np.zeros(n + K), bounds=bounds)
+            x_lp = np.maximum(res_lp.x[:n], 0) if res_lp.success else None
+
+        ResultsWindow(self.root, self.foods, x_opt, target_prot, budget, x_lp=x_lp)
 
     def _run_sensitivity(self):
         if len(self.foods) < 1:
@@ -249,6 +329,9 @@ class OptimizationApp:
         DatasetDialog(self.root, self._add_from_dataset)
 
     def _add_from_dataset(self, food):
+        if self._food_exists(food.name):
+            messagebox.showwarning("Duplicado", f'"{food.name}" já está na lista.')
+            return
         self.foods.append(food)
         self.lb_foods.insert(tk.END, repr(food))
         self.food_counter += 1

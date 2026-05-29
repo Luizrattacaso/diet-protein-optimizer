@@ -292,6 +292,23 @@ NUTRITION_DATA = [
 ]
 
 
+# Mapa de categorias por índice em NUTRITION_DATA (mesma ordem do dataset)
+FOOD_CATEGORIES = (
+    ["Carnes Bovinas"]       * 19 +
+    ["Aves"]                 * 14 +
+    ["Suínos/Embutidos"]     * 20 +
+    ["Peixes/Frutos do Mar"] * 22 +
+    ["Ovos"]                 *  6 +
+    ["Laticínios"]           * 24 +
+    ["Suplementos"]          * 12 +
+    ["Leguminosas"]          * 18 +
+    ["Oleaginosas/Sementes"] * 17 +
+    ["Cereais/Grãos"]        * 21 +
+    ["Vegetais"]             * 16 +
+    ["Funcionais/Especiais"] * 14
+)
+
+
 def _por_kg(nome, preco, gramas, proteina):
     """Normaliza para 1000g (1kg): só escala proteína. Preço mantido como referência base TACO."""
     if gramas == 1000:
@@ -301,15 +318,21 @@ def _por_kg(nome, preco, gramas, proteina):
 
 
 def get_all_foods():
-    return [Protein(n, round(p * FATOR_IPCA, 2), g, pr)
-            for n, p, g, pr in (_por_kg(*x) for x in NUTRITION_DATA)]
+    result = []
+    for i, raw in enumerate(NUTRITION_DATA):
+        n, p, g, pr = _por_kg(*raw)
+        result.append(Protein(n, round(p * FATOR_IPCA, 2), g, pr, FOOD_CATEGORIES[i]))
+    return result
 
 
 def search_foods(query: str):
     q = query.lower()
-    return [Protein(n, round(p * FATOR_IPCA, 2), g, pr)
-            for n, p, g, pr in (_por_kg(*x) for x in NUTRITION_DATA)
-            if q in n.lower()]
+    result = []
+    for i, raw in enumerate(NUTRITION_DATA):
+        n, p, g, pr = _por_kg(*raw)
+        if q in n.lower():
+            result.append(Protein(n, round(p * FATOR_IPCA, 2), g, pr, FOOD_CATEGORIES[i]))
+    return result
 
 
 class DatasetDialog(tk.Toplevel):

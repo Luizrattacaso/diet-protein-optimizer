@@ -27,8 +27,15 @@ class ResultsWindow(tk.Toplevel):
     def _setup_ui(self):
         res_frame = ttk.LabelFrame(self, text="3. Formulação e Resultados", padding=15)
         res_frame.pack(fill="x", padx=20, pady=10)
-        self.txt_math = tk.Text(res_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
-        self.txt_math.pack(fill="both", expand=True)
+
+        txt_frame = ttk.Frame(res_frame)
+        txt_frame.pack(fill="both", expand=True)
+        _vsb = ttk.Scrollbar(txt_frame, orient="vertical")
+        self.txt_math = tk.Text(txt_frame, height=8, wrap=tk.WORD, font=("Consolas", 10),
+                                yscrollcommand=_vsb.set)
+        _vsb.config(command=self.txt_math.yview)
+        _vsb.pack(side="right", fill="y")
+        self.txt_math.pack(side="left", fill="both", expand=True)
 
         graph_frame = ttk.LabelFrame(self, text="4. Espaço de Soluções (Região Viável)", padding=15)
         graph_frame.pack(fill="both", expand=True, padx=20, pady=10)
@@ -61,7 +68,10 @@ class ResultsWindow(tk.Toplevel):
             total_prot += prot_item
             math_text += f"  • {f.name}: x = {int(val)} un. | Custo: R${cost_item:.2f} | Prot: {prot_item:.1f}g\n"
 
+        cats_used = sorted({f.category for f, val in zip(self.foods, self.x_opt) if val > 0})
         math_text += f"\nCusto ILP: R${total_cost:.2f} | Proteína: {total_prot:.1f}g"
+        if cats_used:
+            math_text += f"\nCategorias cobertas ({len(cats_used)}): {', '.join(cats_used)}"
 
         if self.x_lp is not None:
             math_text += f"\n\nLP RELAXADO (solução contínua / fracionária):\n"
@@ -86,7 +96,7 @@ class ResultsWindow(tk.Toplevel):
         else:
             self._plot_multi_bars()
 
-        self.fig.tight_layout()
+        self.fig.tight_layout(pad=1.5, h_pad=4.5)
         self.canvas.draw()
 
     def _plot_2d_feasible_region(self):
@@ -147,8 +157,8 @@ class ResultsWindow(tk.Toplevel):
                 self.ax.plot(x1, x2_obj_lp, 'b:', linewidth=1.5, alpha=0.7,
                             label=f'F.O. LP (Z = R${Z_lp:.2f})')
 
-        self.ax.set_xlabel(f'Quantidade: {f1.name} (x₁)', fontsize=11, fontweight='bold')
-        self.ax.set_ylabel(f'Quantidade: {f2.name} (x₂)', fontsize=11, fontweight='bold')
+        self.ax.set_xlabel(f'Quantidade: {f1.name} (x₁)', fontsize=9, fontweight='bold')
+        self.ax.set_ylabel(f'Quantidade: {f2.name} (x₂)', fontsize=9, fontweight='bold')
         self.ax.set_title('RESOLUÇÃO GRÁFICA: Linhas Delimitam o Espaço de Soluções',
                          fontsize=13, fontweight='bold', pad=15)
         self.ax.legend(loc='upper right', fontsize=9, framealpha=0.9)
@@ -230,7 +240,7 @@ class ResultsWindow(tk.Toplevel):
             ax1.bar(x_pos + width / 2, quantities_ilp, width, label='ILP (inteiro)',
                     color='#4CAF50')
             ax1.set_xticks(x_pos)
-            ax1.set_xticklabels(names, rotation=15, ha='right', fontsize=8)
+            ax1.set_xticklabels(names, rotation=45, ha='right', fontsize=8)
             ax1.set_ylabel('Quantidade')
             ax1.set_title('Quantidade por Alimento — LP vs ILP')
             ax1.legend(fontsize=9)
@@ -360,10 +370,10 @@ class SensitivityWindow(tk.Toplevel):
                     fontsize=8, color='darkred',
                     bbox=dict(boxstyle='round,pad=0.25', facecolor='#FFEBEE', alpha=0.85))
 
-        ax1.set_xlabel('Orçamento (R$)', fontsize=11, fontweight='bold')
-        ax1.set_ylabel('Proteína máxima alcançável (g)', fontsize=11, fontweight='bold')
+        ax1.set_xlabel('Orçamento (R$)', fontsize=9, fontweight='bold')
+        ax1.set_ylabel('Proteína máxima alcançável (g)', fontsize=9, fontweight='bold')
         ax1.set_title('Variação do Orçamento\n(degraus = arredondamento ILP)',
-                      fontsize=11, fontweight='bold')
+                      fontsize=9, fontweight='bold')
         ax1.legend(fontsize=9, framealpha=0.9)
         ax1.grid(True, alpha=0.3, linestyle=':')
 
@@ -380,11 +390,11 @@ class SensitivityWindow(tk.Toplevel):
             ax2.axhline(y=self.budget, color='#E65100', linestyle='--',
                         linewidth=1.8, label=f'Orçamento: R${self.budget:.0f}')
 
-        ax2.set_xlabel('Meta de Proteína (g)', fontsize=11, fontweight='bold')
-        ax2.set_ylabel('Custo mínimo (R$)', fontsize=11, fontweight='bold')
+        ax2.set_xlabel('Meta de Proteína (g)', fontsize=9, fontweight='bold')
+        ax2.set_ylabel('Custo mínimo (R$)', fontsize=9, fontweight='bold')
         ax2.set_title('Fronteira de Pareto — Custo × Meta de Proteína\n'
                       '(sem restrição de orçamento)',
-                      fontsize=11, fontweight='bold')
+                      fontsize=9, fontweight='bold')
         ax2.legend(fontsize=9, framealpha=0.9)
         ax2.grid(True, alpha=0.3, linestyle=':')
 

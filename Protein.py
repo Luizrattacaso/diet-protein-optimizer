@@ -1,9 +1,10 @@
 class Protein:
-    def __init__(self, name, price, grams, protein_grams):
+    def __init__(self, name, price, grams, protein_grams, category="Outro"):
         self.name = name
         self.price = price
         self.grams = grams
         self.protein_grams = protein_grams  #proteina/g
+        self.category = category
 
     def get_price(self):
         return self.price
