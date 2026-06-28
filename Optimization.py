@@ -58,6 +58,9 @@ class OptimizationApp:
         self.lb_foods = tk.Listbox(input_frame, height=6, font=("Arial", 10))
         self.lb_foods.grid(row=5, column=0, columnspan=2, sticky="ew", pady=5)
 
+        ttk.Button(input_frame, text="🗑️ Remover Selecionado", command=self._remove_food).grid(
+            row=6, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+
         param_frame = ttk.LabelFrame(self.root, text="2. Parâmetros da Otimização", padding=15)
         param_frame.grid(row=1, column=0, padx=15, pady=10, sticky="ew")
 
@@ -217,6 +220,15 @@ class OptimizationApp:
         for ent in [self.ent_name, self.ent_price, self.ent_grams, self.ent_prot]:
             ent.delete(0, tk.END)
         self.ent_name.focus()
+
+    def _remove_food(self):
+        selected = self.lb_foods.curselection()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione um alimento na lista para remover.")
+            return
+        idx = selected[0]
+        self.lb_foods.delete(idx)
+        del self.foods[idx]
 
     def _run_optimization(self):
         if len(self.foods) < 1:
